@@ -102,6 +102,51 @@ function detectDisease(text) {
   return first.d;
 }
 
+// ---------- treatment / ingredient concepts (for "where is X used?" questions) ----------
+// When someone asks about a treatment rather than a disease, we gather EVERY passage
+// that mentions it, so the answer can list all the conditions it applies to.
+const CONCEPT_GROUPS = [
+  { name: "moisturizer / emollient", terms: ["moisturizer","moisturiser","emollient","emollients","emolent","emoli","equra","ময়েশ্চারাইজার","ইমোলেন্ট","ইমোলিয়েন্ট","ময়েশ্চারাইজিং"] },
+  { name: "topical steroid", terms: ["steroid","steroids","corticosteroid","topical steroid","hydrocortisone","clobetasol","halobetasol","betamethasone","fluticasone","clobetasone","স্টেরয়েড","স্টেরয়েড","করটিকোস্টেরয়েড","হাইড্রোকরটিসন"] },
+  { name: "antifungal", terms: ["antifungal","anti-fungal","antifungals","terbinafine","itraconazole","fluconazole","clotrimazole","miconazole","luliconazole","ciclopirox","oxiconazole","ketoconazole","এন্টিফাঙ্গাল","অ্যান্টিফাঙ্গাল","টারবিনাফিন","ইট্রাকোনাজল"] },
+  { name: "antibiotic", terms: ["antibiotic","antibiotics","mupirocin","fusidic","retapamulin","amoxicillin","cephalexin","clindamycin","gentamicin","neomycin","এন্টিবায়োটিক","অ্যান্টিবায়োটিক","মিউপিরোসিন","ফুসিডিক"] },
+  { name: "antihistamine", terms: ["antihistamine","antihistamines","diphenhydramine","এন্টি হিস্টামিন","অ্যান্টিহিস্টামিন","হিস্টামিন"] },
+  { name: "sunscreen / sunblock", terms: ["sunscreen","sunblock","sunblocks","spf","sunmask","ultraviolet","uv ","সানব্লক","সানস্ক্রিন","আল্ট্রাভায়োলেট","সানমাস্ক"] },
+  { name: "salicylic acid / keratolytic", terms: ["salicylic","keratolytic","keratolytics","salicid","prosalic","স্যালিসাইলিক","কেরাটোলাইটিক","কেরাটোলাইটিক্স"] },
+  { name: "tacrolimus", terms: ["tacrolimus","remus","ট্যাক্রোলিমাস","ট্যাকরোলিমাস"] },
+  { name: "minoxidil", terms: ["minoxidil","splendora","মিনোক্সিডিল"] },
+  { name: "retinoid", terms: ["retinoid","retinoids","tretinoin","adapalene","isotretinoin","retinoic","রেটিনয়েড","রেটিনয়িক","আইসোট্রেটিনইন"] },
+  { name: "phototherapy / light treatment", terms: ["phototherapy","photochemotherapy","puva","light treatment","ফটোথেরাপি","ফটোকেমোথেরাপি","আলোকরশ্মি"] },
+  { name: "cryotherapy / physical removal", terms: ["cryotherapy","electrosurgery","curettage","excision","laser","ক্রায়োথেরাপি","ইলেকট্রোসার্জারি","কিউরেটেজ","লেজার"] },
+  { name: "permethrin / ivermectin", terms: ["permethrin","ivermectin","crotamiton","scabex","alice","পারমেথ্রিন","ইভারমেকটিন","ক্রোটামিটন"] },
+  { name: "vitamin D analogue", terms: ["calcipotriol","vitamin d","dyvon","ক্যালসিপোট্রিয়ল","ভিটামিন ডি"] },
+];
+
+// Returns a concept if the question is about a treatment/ingredient rather than one disease.
+function detectConcept(question) {
+  const q = normalize(question);
+  // If a specific disease is clearly named, treat it as a normal question.
+  for (const d of DISEASES) {
+    for (const kw of d.keywords) {
+      const k = kw.toLowerCase().trim();
+      if (k.length >= 4 && q.includes(k)) return null;
+    }
+  }
+  for (const g of CONCEPT_GROUPS) {
+    if (g.terms.some((t) => q.includes(t.toLowerCase().trim()))) return g;
+  }
+  return null;
+}
+
+// Every passage mentioning the concept — not just the top few.
+function retrieveByConcept(group, allChunks, maxChunks = 24) {
+  const hits = allChunks.filter((c) => {
+    const t = c.text.toLowerCase();
+    return group.terms.some((term) => t.includes(term.toLowerCase().trim()));
+  });
+  return hits.slice(0, maxChunks);
+}
+
 // ---------- language & typo helpers ----------
 const hasBengali = (s) => /[\u0980-\u09FF]/.test(s);
 
@@ -318,8 +363,17 @@ export default function App() {
       q +
       (sugg.length ? " " + sugg.map((d) => d.en + " " + d.bn + " " + d.keywords.join(" ")).join(" ") : "");
 
-    const hits = retrieve(retrievalQuery, chunks, 8);
-    const context = hits.length ? hits.map((h) => h.text).join("\n\n---\n\n") : "(no matching information found)";
+    // "Where is X used?" style questions get every relevant passage, not just the top few.
+    const concept = detectConcept(q);
+    let hits = concept ? retrieveByConcept(concept, chunks) : retrieve(retrievalQuery, chunks, 8);
+    if (concept && hits.length === 0) hits = retrieve(retrievalQuery, chunks, 8);
+
+    let context = hits.length ? hits.map((h) => h.text).join("\n\n---\n\n") : "(no matching information found)";
+    if (context.length > 28000) context = context.slice(0, 28000);
+
+    const conceptRule = concept
+      ? `\nTHIS IS AN OVERVIEW QUESTION about "${concept.name}". The passages below come from across the whole knowledge base. List EVERY condition in them where this is used or recommended — do not stop at one or two. Give a one-line reason for each, group related conditions together, and start with a short plain-language explanation of what it does and why it helps. End with [topic: none] since the answer covers many conditions.\n`
+      : "";
     const historyText = messages.slice(-6).map((m) => `${m.role === "user" ? "User" : "You"}: ${m.text}`).join("\n");
 
     const prompt = `You are the assistant behind "${settings.appName}" — a warm, friendly and professional skin-health guide for users in Bangladesh.
@@ -334,7 +388,7 @@ HOW TO ANSWER:
 7. For treatment questions, you may end with one brief caring reminder to consult a doctor before using medicines, when natural — not every message.
 8. TOPIC TAG (required): after your complete answer, on a new final line, write exactly [topic: <id>] where <id> is the ONE condition your answer is mainly about, chosen ONLY from this list: impetigo, tinea_pedis, tinea_corporis, tinea_cruris, tinea_capitis, tinea_faciei, tinea_manuum, onychomycosis, tinea_versicolor, scabies, atopic_eczema, seborrheic_eczema, discoid_eczema, pompholyx, contact_dermatitis, varicose_eczema, lichen_simplex, lichen_planus, insect_bites, psoriasis, scalp_psoriasis, melasma, acne, warts, corns_calluses, alopecia, vitiligo, dry_skin, sunburn, hirsutism. If the message is a greeting, small talk, or your answer is not mainly about one of these conditions, write [topic: none]. This line is hidden from the user.
 
-${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's message seems to contain a misspelled condition name. Most likely they mean: ${suggNames}. Do NOT give the full answer yet. Reply with ONE short, friendly question confirming which condition they mean (in the user's language, e.g. "আপনি কি সোরিয়াসিস (Psoriasis) বুঝাতে চেয়েছেন?" / "Did you mean Psoriasis?"). If there are multiple likely options, list them briefly. End this confirmation message with [topic: none].\n\n` : ""}${historyText ? `Conversation so far:\n${historyText}\n\n` : ""}REFERENCE INFORMATION (never mention it):\n${context}\n\nUser's message: ${q}`;
+${conceptRule}${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's message seems to contain a misspelled condition name. Most likely they mean: ${suggNames}. Do NOT give the full answer yet. Reply with ONE short, friendly question confirming which condition they mean (in the user's language, e.g. "আপনি কি সোরিয়াসিস (Psoriasis) বুঝাতে চেয়েছেন?" / "Did you mean Psoriasis?"). If there are multiple likely options, list them briefly. End this confirmation message with [topic: none].\n\n` : ""}${historyText ? `Conversation so far:\n${historyText}\n\n` : ""}REFERENCE INFORMATION (never mention it):\n${context}\n\nUser's message: ${q}`;
 
     try {
       const data = await apiClaude([{ role: "user", content: prompt }]);
