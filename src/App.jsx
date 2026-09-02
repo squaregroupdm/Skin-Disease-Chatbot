@@ -201,6 +201,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [dataLoaded, setDataLoaded] = useState(false); // true only after a successful load
   const [zoom, setZoom] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
 
@@ -225,6 +226,7 @@ export default function App() {
         const { settings: s, books: b } = await apiGetData();
         const merged = { ...DEFAULT_SETTINGS, ...(s || {}) };
         setSettings(merged); setDraft(merged); setBooks(b || []);
+        setDataLoaded(true);
       } catch (e) { setLoadError(e.message); }
       setLoaded(true);
     })();
@@ -242,10 +244,27 @@ export default function App() {
 
   const showFlash = (msg) => { setFlash(msg); setTimeout(() => setFlash(""), 2500); };
 
-  const persistBooks = async (next) => {
-    setBooks(next);
-    try { await apiAdmin(adminPass, { action: "save", key: "books", value: next }); }
-    catch (e) { showFlash("Save failed: " + e.message); }
+  // Sources are added/removed one at a time on the server, so this browser
+  // can never overwrite the whole list (which previously wiped sources when
+  // the page had loaded during a backend hiccup).
+  const refreshBooks = async () => {
+    try { const { books: b } = await apiGetData(); setBooks(b || []); } catch { /* keep current */ }
+  };
+
+  const addBook = async (name, text) => {
+    if (!dataLoaded) { showFlash("Still loading — please wait a moment"); return false; }
+    await apiAdmin(adminPass, { action: "addBook", book: { name, text } });
+    await refreshBooks();
+    return true;
+  };
+
+  const removeBook = async (name) => {
+    if (!window.confirm(`Remove "${name}" from the knowledge base?`)) return;
+    try {
+      await apiAdmin(adminPass, { action: "removeBook", name });
+      await refreshBooks();
+      showFlash("Removed ✓");
+    } catch (e) { showFlash("Remove failed: " + e.message); }
   };
 
   const onAdminFile = async (e) => {
@@ -256,8 +275,8 @@ export default function App() {
     try {
       const text = await fileToText(f, setUploadStatus, adminPass);
       const name = f.name.replace(/\.[^.]+$/, "");
-      await persistBooks([...books.filter((b) => b.name !== name), { name, text }]);
-      setUploadStatus(`✓ Added "${name}" (${Math.round(text.length / 1000)}k characters)`);
+      const ok = await addBook(name, text);
+      if (ok) setUploadStatus(`✓ Added "${name}" (${Math.round(text.length / 1000)}k characters) — saved permanently`);
     } catch (err) { setUploadStatus(`✕ ${err.message}`); }
   };
 
@@ -491,6 +510,11 @@ ${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's message seems to
                 {adminTab === "sources" && (
                   <div>
                     <p style={{ fontSize: 13, color: S.sub, marginTop: 0 }}>These files power every user's answers. Supported: <b>.txt, .md, .docx, .pdf, .csv, .xlsx</b></p>
+                    {!dataLoaded && (
+                      <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, marginBottom: 10 }}>
+                        ⚠️ Couldn't load the current sources from the server. Uploading is disabled until this page loads them successfully — please refresh.
+                      </div>
+                    )}
                     {books.map((b) => (
                       <div key={b.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#F8FAFC", border: `1px solid ${S.border}`, borderRadius: 14, padding: "10px 14px", marginBottom: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -500,10 +524,18 @@ ${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's message seems to
                             <div style={{ fontSize: 11.5, color: S.sub }}>{Math.round(b.text.length / 1000)}k characters</div>
                           </div>
                         </div>
-                        <button onClick={() => persistBooks(books.filter((x) => x.name !== b.name))} style={{ background: "transparent", border: `1px solid ${S.border}`, borderRadius: 10, padding: "6px 12px", fontSize: 12, cursor: "pointer", color: "#B91C1C" }}>Remove</button>
+                        <button onClick={() => removeBook(b.name)} style={{ background: "transparent", border: `1px solid ${S.border}`, borderRadius: 10, padding: "6px 12px", fontSize: 12, cursor: "pointer", color: "#B91C1C" }}>Remove</button>
                       </div>
                     ))}
-                    {books.length === 0 && <div style={{ fontSize: 13, color: S.sub, padding: "8px 0" }}>No sources yet.</div>}
+                    {books.length === 0 && (
+                      <div style={{ fontSize: 13, color: S.sub, padding: "8px 0" }}>
+                        No sources yet.{" "}
+                        <button onClick={async () => { try { const r = await apiAdmin(adminPass, { action: "restoreBooks" }); await refreshBooks(); showFlash(`Restored ${r.restored} source(s) ✓`); } catch (e) { showFlash(e.message); } }}
+                          style={{ background: "none", border: "none", color: A, fontWeight: 700, fontSize: 13, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                          Restore last backup
+                        </button>
+                      </div>
+                    )}
                     <button onClick={() => fileRef.current?.click()} style={{ background: grad, color: "#fff", border: "none", borderRadius: 12, padding: "10px 18px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", marginTop: 6 }}>⬆ Upload source file</button>
                     <input ref={fileRef} type="file" accept=".txt,.md,.docx,.pdf,.csv,.xlsx,.xls" onChange={onAdminFile} style={{ display: "none" }} />
                     {uploadStatus && <div style={{ fontSize: 12.5, marginTop: 10, color: uploadStatus.startsWith("✕") ? "#B91C1C" : S.sub }}>{uploadStatus}</div>}
@@ -512,7 +544,7 @@ ${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's message seems to
                     <input value={pasteName} onChange={(e) => setPasteName(e.target.value)} placeholder="Source name" style={{ ...inputStyle, marginBottom: 8 }} />
                     <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder="Paste content…" rows={4} style={{ ...inputStyle, resize: "vertical" }} />
                     <button disabled={!pasteText.trim()}
-                      onClick={() => { const n = pasteName.trim() || "Pasted source"; persistBooks([...books.filter((b) => b.name !== n), { name: n, text: pasteText }]); setPasteName(""); setPasteText(""); }}
+                      onClick={async () => { const n = pasteName.trim() || "Pasted source"; try { const ok = await addBook(n, pasteText); if (ok) { setPasteName(""); setPasteText(""); showFlash("Added ✓"); } } catch (e) { showFlash("Save failed: " + e.message); } }}
                       style={{ marginTop: 8, background: pasteText.trim() ? S.ink : "#CBD5E1", color: "#fff", border: "none", borderRadius: 12, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: pasteText.trim() ? "pointer" : "default" }}>Add pasted text</button>
                     {flash && <div style={{ marginTop: 10, fontSize: 12.5, color: A, fontWeight: 600 }}>{flash}</div>}
                   </div>
