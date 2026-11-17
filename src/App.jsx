@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS = {
   tagline: "Trusted medical guidance",
   gateHeading: "Select a therapeutic area",
   gateSub: "Choose the area you want to ask about, so answers stay accurate to that specialty.",
-  disclaimer: "For general information — always consult a doctor before starting any treatment.",
+  disclaimer: "For general information. Always consult a doctor before starting any treatment.",
   accent: "#0F9B8E",
   classes: DEFAULT_CLASSES,
 };
@@ -210,7 +210,7 @@ async function fileToText(file, onStatus, adminPass) {
     return wb.SheetNames.map((n) => `Sheet: ${n}\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n])).join("\n\n");
   }
   if (ext === "pdf") {
-    onStatus && onStatus("Reading PDF with AI — this may take a few minutes for large files…");
+    onStatus && onStatus("Reading PDF with AI. This may take a few minutes for large files…");
     const base64 = await new Promise((res, rej) => {
       const r = new FileReader();
       r.onload = () => res(String(r.result).split(",")[1]);
@@ -221,7 +221,7 @@ async function fileToText(file, onStatus, adminPass) {
       role: "user",
       content: [
         { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-        { type: "text", text: "Transcribe the COMPLETE text content of this document as plain text, in reading order, section by section. Include headings, descriptions, symptom lists, treatments and product names. If any text appears in Bengali, transcribe it in proper Unicode Bengali. Output ONLY the transcribed text — no commentary." },
+        { type: "text", text: "Transcribe the COMPLETE text content of this document as plain text, in reading order, section by section. Include headings, descriptions, symptom lists, treatments and product names. If any text appears in Bengali, transcribe it in proper Unicode Bengali. Output ONLY the transcribed text, with no commentary." },
       ],
     }];
     let full = "";
@@ -306,7 +306,7 @@ export default function App() {
   };
 
   const addBook = async (name, text, category) => {
-    if (!dataLoaded) { showFlash("Still loading — please wait a moment"); return false; }
+    if (!dataLoaded) { showFlash("Still loading, please wait a moment"); return false; }
     if (!category) { showFlash("Select a therapeutic class first"); return false; }
     await apiAdmin(adminPass, { action: "addBook", book: { name, text, category } });
     await refreshBooks();
@@ -400,11 +400,11 @@ export default function App() {
     if (context.length > 28000) context = context.slice(0, 28000);
 
     const conceptRule = concept
-      ? `\nTHIS IS AN OVERVIEW QUESTION about "${concept.name}". The passages below come from across the whole knowledge base. List EVERY condition in them where this is used or recommended — do not stop at one or two. Give a one-line reason for each, group related conditions together, and start with a short plain-language explanation of what it does and why it helps. End with [topic: none] since the answer covers many conditions.\n`
+      ? `\nTHIS IS AN OVERVIEW QUESTION about "${concept.name}". The passages below come from across the whole knowledge base. List EVERY condition in them where this is used or recommended. Do not stop at one or two. Give a one-line reason for each, group related conditions together, and start with a short plain-language explanation of what it does and why it helps. End with [topic: none] since the answer covers many conditions.\n`
       : "";
 
     const topicRule = activeClass.images
-      ? `\n8. TOPIC TAG (required): after your complete answer, on a new final line, write exactly [topic: <id>] where <id> is the ONE condition your answer is mainly about, chosen ONLY from this list: ${DISEASES.map((d) => d.id).join(", ")}. If the message is a greeting, small talk, or your answer is not mainly about one of these conditions, write [topic: none]. This line is hidden from the user.`
+      ? `\n9. TOPIC TAG (required): after your complete answer, on a new final line, write exactly [topic: <id>] where <id> is the ONE condition your answer is mainly about, chosen ONLY from this list: ${DISEASES.map((d) => d.id).join(", ")}. If the message is a greeting, small talk, or your answer is not mainly about one of these conditions, write [topic: none]. This line is hidden from the user.`
       : "";
 
     const historyText = messages.slice(-6).map((m) => `${m.role === "user" ? "User" : "You"}: ${m.text}`).join("\n");
@@ -415,11 +415,12 @@ HOW TO ANSWER:
 1. Base your answer ONLY on the reference information below. Never invent facts, doses, or medicine names that are not in it.
 2. Speak naturally and conversationally, like a caring pharmacist explaining things to a person. NEVER mention "the book", "the text", "excerpts", "sources", "documents" or "reference". Answer as if this is your own knowledge.
 3. LANGUAGE (strict): ${langRule} Do not mix languages, except medicine/product names which may stay in English.
-4. Keep answers clear and human — short paragraphs; a short list only when listing symptoms or treatment options.
-5. If the user greets you or makes small talk, respond warmly and invite them to ask about this area.
-6. This conversation is limited to ${activeClass.name}. If the question is about a different medical area, or is not covered by the reference information, say honestly and kindly that you don't have details on that here, and suggest consulting a ${activeClass.specialist}. Do not guess.
-7. For treatment questions, you may end with one brief caring reminder to consult a doctor before using medicines, when natural — not every message.${topicRule}
-${conceptRule}${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's message seems to contain a misspelled condition name. Most likely they mean: ${suggNames}. Do NOT give the full answer yet. Reply with ONE short, friendly question confirming which condition they mean (in the user's language, e.g. "আপনি কি সোরিয়াসিস (Psoriasis) বুঝাতে চেয়েছেন?" / "Did you mean Psoriasis?"). If there are multiple likely options, list them briefly. End this confirmation message with [topic: none].\n\n` : ""}${historyText ? `Conversation so far:\n${historyText}\n\n` : ""}REFERENCE INFORMATION (never mention it):
+4. Keep answers clear and human: short paragraphs, and a short list only when listing symptoms or treatment options.
+5. NEVER use em dashes (—) in your answer. Use commas, full stops or brackets instead.
+6. If the user greets you or makes small talk, respond warmly and invite them to ask about this area.
+7. This conversation is limited to ${activeClass.name}. If the question is about a different medical area, or is not covered by the reference information, say honestly and kindly that you don't have details on that here, and suggest consulting a ${activeClass.specialist}. Do not guess.
+8. For treatment questions, you may end with one brief caring reminder to consult a doctor before using medicines, when natural, not on every message.${topicRule}
+${conceptRule}${sugg.length ? `IMPORTANT, POSSIBLE MISSPELLING: The user's message seems to contain a misspelled condition name. Most likely they mean: ${suggNames}. Do NOT give the full answer yet. Reply with ONE short, friendly question confirming which condition they mean (in the user's language, e.g. "আপনি কি সোরিয়াসিস (Psoriasis) বুঝাতে চেয়েছেন?" / "Did you mean Psoriasis?"). If there are multiple likely options, list them briefly. End this confirmation message with [topic: none].\n\n` : ""}${historyText ? `Conversation so far:\n${historyText}\n\n` : ""}REFERENCE INFORMATION (never mention it):
 ${context}
 
 User's message: ${q}`;
@@ -436,7 +437,7 @@ User's message: ${q}`;
       } else if (activeClass.images) {
         disease = detectDisease(q + " " + answer);
       }
-      setMessages((m) => [...m, { role: "assistant", text: answer || "Something went wrong — please try again.", disease }]);
+      setMessages((m) => [...m, { role: "assistant", text: answer || "Something went wrong. Please try again.", disease }]);
     } catch {
       setMessages((m) => [...m, { role: "assistant", text: "I couldn't connect just now. Please check your internet and try again." }]);
     }
@@ -603,7 +604,7 @@ User's message: ${q}`;
                 Ask about {activeClass.name.toLowerCase()}
               </div>
               <p style={{ fontSize: 14, color: S.body, maxWidth: 420, margin: "8px auto 20px", lineHeight: 1.65 }}>
-                Symptoms, causes or treatment — English বা বাংলা, যেভাবে সুবিধা।
+                Symptoms, causes or treatment. English বা বাংলা, যেভাবে সুবিধা।
               </p>
               {!hasSources ? (
                 <div style={{ fontSize: 13, color: S.sub, background: S.card, border: `1px solid ${S.line}`, borderRadius: 14, padding: "14px 18px", display: "inline-block" }}>
@@ -757,7 +758,7 @@ User's message: ${q}`;
                   </p>
                   {!dataLoaded && (
                     <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, marginBottom: 10 }}>
-                      Couldn't load the current sources from the server. Uploading is disabled until this page loads them — please refresh.
+                      Couldn't load the current sources from the server. Uploading is disabled until this page loads them. Please refresh.
                     </div>
                   )}
                   {unassigned > 0 && (
@@ -804,10 +805,10 @@ User's message: ${q}`;
                   )}
 
                   <div style={{ borderTop: `1px solid ${S.line}`, marginTop: 18, paddingTop: 4 }}>
-                    <label style={labelStyle}>Add a source — step 1: therapeutic class</label>
+                    <label style={labelStyle}>Add a source. Step 1: therapeutic class</label>
                     <select value={uploadClass} onChange={(e) => setUploadClass(e.target.value)} style={inputStyle}>
                       <option value="">Select a class…</option>
-                      {classes.map((c) => <option key={c.id} value={c.id}>{c.name} — {c.bn}</option>)}
+                      {classes.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.bn}</option>)}
                     </select>
 
                     <label style={labelStyle}>Step 2: upload a file, or paste text</label>
