@@ -17,26 +17,34 @@ export default async function handler(req, res) {
   try {
     if (body.action === "verify") return res.status(200).json({ ok: true });
 
-    // --- Sources are edited ONE AT A TIME, server-side. ---
-    // The browser never sends the whole list, so a stale or empty page
-    // can no longer wipe existing sources.
+    // Sources are edited one at a time on the server, so a stale page in a
+    // browser can never overwrite the whole list.
     if (body.action === "addBook") {
-      const { name, text } = body.book || {};
-      if (!name || !text) return res.status(400).json({ error: "Book name and text required" });
+      const { name, text, category } = body.book || {};
+      if (!name || !text) return res.status(400).json({ error: "Source name and text are required" });
+      if (!category) return res.status(400).json({ error: "Therapeutic class is required" });
       const current = await getValue("books", []);
-      await setValue("books_backup", current); // keep a restore point
-      const next = [...current.filter((b) => b.name !== name), { name, text }];
+      await setValue("books_backup", current);
+      const next = [...current.filter((b) => b.name !== name), { name, text, category }];
       await setValue("books", next);
-      return res.status(200).json({ ok: true, books: next.map((b) => ({ name: b.name, size: b.text.length })) });
+      return res.status(200).json({ ok: true });
+    }
+
+    if (body.action === "setBookCategory") {
+      if (!body.name || !body.category) return res.status(400).json({ error: "Source name and class are required" });
+      const current = await getValue("books", []);
+      await setValue("books_backup", current);
+      const next = current.map((b) => (b.name === body.name ? { ...b, category: body.category } : b));
+      await setValue("books", next);
+      return res.status(200).json({ ok: true });
     }
 
     if (body.action === "removeBook") {
-      if (!body.name) return res.status(400).json({ error: "Book name required" });
+      if (!body.name) return res.status(400).json({ error: "Source name is required" });
       const current = await getValue("books", []);
-      await setValue("books_backup", current); // keep a restore point
-      const next = current.filter((b) => b.name !== body.name);
-      await setValue("books", next);
-      return res.status(200).json({ ok: true, books: next.map((b) => ({ name: b.name, size: b.text.length })) });
+      await setValue("books_backup", current);
+      await setValue("books", current.filter((b) => b.name !== body.name));
+      return res.status(200).json({ ok: true });
     }
 
     if (body.action === "restoreBooks") {
@@ -51,9 +59,9 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // Writing the whole book list from the browser is no longer allowed.
+    // Writing the whole source list from the browser is no longer allowed.
     if (body.action === "save" && body.key === "books") {
-      return res.status(400).json({ error: "Use addBook/removeBook instead" });
+      return res.status(400).json({ error: "Use addBook / removeBook instead" });
     }
 
     return res.status(400).json({ error: "Unknown action" });

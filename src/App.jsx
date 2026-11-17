@@ -4,15 +4,44 @@ import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { DISEASE_IMAGES, DISEASES } from "./diseaseData.js";
 
+// ---------- defaults ----------
+const DEFAULT_CLASSES = [
+  { id: "dermatology", name: "Dermatology", bn: "চর্মরোগ", specialist: "dermatologist", color: "#0F9B8E", images: true,
+    chips: ["দাদ এর চিকিৎসা কী?", "How to treat acne?", "স্ক্যাবিস কীভাবে বুঝব?", "Nail fungus medicine dose"] },
+  { id: "diabetes", name: "Diabetes & Endocrine", bn: "ডায়াবেটিস ও হরমোন", specialist: "diabetologist or endocrinologist", color: "#2563EB", images: false, chips: [] },
+  { id: "cardiology", name: "Cardiology", bn: "হৃদরোগ", specialist: "cardiologist", color: "#DC2626", images: false, chips: [] },
+  { id: "gastro", name: "Gastroenterology", bn: "পরিপাকতন্ত্র", specialist: "gastroenterologist", color: "#D97706", images: false, chips: [] },
+  { id: "respiratory", name: "Respiratory", bn: "শ্বাসতন্ত্র", specialist: "pulmonologist", color: "#0891B2", images: false, chips: [] },
+  { id: "antiinfective", name: "Anti-infectives", bn: "সংক্রমণ ও অ্যান্টিবায়োটিক", specialist: "doctor", color: "#7C3AED", images: false, chips: [] },
+];
+
 const DEFAULT_SETTINGS = {
-  appName: "Skin Care Assistant",
-  tagline: "Your trusted dermatology guide",
-  welcome: "How can I help your skin today?",
-  welcomeSub: "Ask me about any skin condition — symptoms, causes or treatment. English বা বাংলা, যেভাবে সুবিধা।",
-  chips: ["দাদ এর চিকিৎসা কী?", "How to treat acne?", "স্ক্যাবিস কীভাবে বুঝব?", "Nail fungus medicine dose"],
+  appName: "Square Health Assistant",
+  tagline: "Trusted medical guidance",
+  gateHeading: "Select a therapeutic area",
+  gateSub: "Choose the area you want to ask about, so answers stay accurate to that specialty.",
   disclaimer: "For general information — always consult a doctor before starting any treatment.",
   accent: "#0F9B8E",
+  classes: DEFAULT_CLASSES,
 };
+
+// ---------- treatment / ingredient concepts (for "where is X used?" questions) ----------
+const CONCEPT_GROUPS = [
+  { name: "moisturizer / emollient", terms: ["moisturizer","moisturiser","emollient","emollients","emolent","emoli","equra","ময়েশ্চারাইজার","ইমোলেন্ট","ইমোলিয়েন্ট","ময়েশ্চারাইজিং"] },
+  { name: "topical steroid", terms: ["steroid","steroids","corticosteroid","topical steroid","hydrocortisone","clobetasol","halobetasol","betamethasone","fluticasone","clobetasone","স্টেরয়েড","করটিকোস্টেরয়েড","হাইড্রোকরটিসন"] },
+  { name: "antifungal", terms: ["antifungal","anti-fungal","antifungals","terbinafine","itraconazole","fluconazole","clotrimazole","miconazole","luliconazole","ciclopirox","oxiconazole","ketoconazole","এন্টিফাঙ্গাল","অ্যান্টিফাঙ্গাল","টারবিনাফিন","ইট্রাকোনাজল"] },
+  { name: "antibiotic", terms: ["antibiotic","antibiotics","mupirocin","fusidic","retapamulin","amoxicillin","cephalexin","clindamycin","gentamicin","neomycin","এন্টিবায়োটিক","অ্যান্টিবায়োটিক","মিউপিরোসিন","ফুসিডিক"] },
+  { name: "antihistamine", terms: ["antihistamine","antihistamines","diphenhydramine","এন্টি হিস্টামিন","অ্যান্টিহিস্টামিন","হিস্টামিন"] },
+  { name: "sunscreen / sunblock", terms: ["sunscreen","sunblock","sunblocks","spf","sunmask","ultraviolet","সানব্লক","সানস্ক্রিন","আল্ট্রাভায়োলেট","সানমাস্ক"] },
+  { name: "salicylic acid / keratolytic", terms: ["salicylic","keratolytic","keratolytics","salicid","prosalic","স্যালিসাইলিক","কেরাটোলাইটিক","কেরাটোলাইটিক্স"] },
+  { name: "tacrolimus", terms: ["tacrolimus","remus","ট্যাক্রোলিমাস","ট্যাকরোলিমাস"] },
+  { name: "minoxidil", terms: ["minoxidil","splendora","মিনোক্সিডিল"] },
+  { name: "retinoid", terms: ["retinoid","retinoids","tretinoin","adapalene","isotretinoin","retinoic","রেটিনয়েড","রেটিনয়িক","আইসোট্রেটিনইন"] },
+  { name: "phototherapy / light treatment", terms: ["phototherapy","photochemotherapy","puva","light treatment","ফটোথেরাপি","ফটোকেমোথেরাপি","আলোকরশ্মি"] },
+  { name: "cryotherapy / physical removal", terms: ["cryotherapy","electrosurgery","curettage","excision","laser","ক্রায়োথেরাপি","ইলেকট্রোসার্জারি","কিউরেটেজ","লেজার"] },
+  { name: "permethrin / ivermectin", terms: ["permethrin","ivermectin","crotamiton","scabex","পারমেথ্রিন","ইভারমেকটিন","ক্রোটামিটন"] },
+  { name: "vitamin D analogue", terms: ["calcipotriol","vitamin d","dyvon","ক্যালসিপোট্রিয়ল","ভিটামিন ডি"] },
+];
 
 // ---------- backend helpers ----------
 async function apiGetData() {
@@ -41,12 +70,14 @@ async function apiClaude(messages, extraHeaders = {}) {
   return data;
 }
 
+const sizeLabel = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k characters` : `${n} characters`);
+
 // ---------- text utilities ----------
 const normalize = (s) =>
   s.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()?"'“”‘’।]/g, " ").replace(/\s+/g, " ").trim();
 const tokenize = (s) => normalize(s).split(" ").filter((w) => w.length > 1);
 
-function chunkText(text, bookName) {
+function chunkText(text, bookName, category) {
   const paras = text.split(/\n\s*\n|\r\n\s*\r\n/).map((p) => p.trim()).filter(Boolean);
   const chunks = [];
   let buf = "";
@@ -57,7 +88,7 @@ function chunkText(text, bookName) {
     } else buf = buf ? buf + "\n\n" + p : p;
   }
   if (buf.trim()) chunks.push(buf);
-  return chunks.map((c, i) => ({ book: bookName, idx: i, text: c }));
+  return chunks.map((c, i) => ({ book: bookName, category, idx: i, text: c }));
 }
 
 function retrieve(question, allChunks, topK = 8) {
@@ -83,7 +114,6 @@ function retrieve(question, allChunks, topK = 8) {
 }
 
 // Fallback topic detection (used only if the AI doesn't tag its answer).
-// Counts occurrences and demands a clear winner — ambiguous cases show no image.
 function detectDisease(text) {
   const t = text.toLowerCase();
   const scored = DISEASES.map((d) => {
@@ -97,35 +127,13 @@ function detectDisease(text) {
     return { d, s };
   }).sort((a, b) => b.s - a.s);
   const first = scored[0], second = scored[1];
-  if (!first || first.s < 6) return null;                     // too weak a signal
-  if (second && second.s > 0 && first.s < second.s * 1.5) return null; // ambiguous
+  if (!first || first.s < 6) return null;
+  if (second && second.s > 0 && first.s < second.s * 1.5) return null;
   return first.d;
 }
 
-// ---------- treatment / ingredient concepts (for "where is X used?" questions) ----------
-// When someone asks about a treatment rather than a disease, we gather EVERY passage
-// that mentions it, so the answer can list all the conditions it applies to.
-const CONCEPT_GROUPS = [
-  { name: "moisturizer / emollient", terms: ["moisturizer","moisturiser","emollient","emollients","emolent","emoli","equra","ময়েশ্চারাইজার","ইমোলেন্ট","ইমোলিয়েন্ট","ময়েশ্চারাইজিং"] },
-  { name: "topical steroid", terms: ["steroid","steroids","corticosteroid","topical steroid","hydrocortisone","clobetasol","halobetasol","betamethasone","fluticasone","clobetasone","স্টেরয়েড","স্টেরয়েড","করটিকোস্টেরয়েড","হাইড্রোকরটিসন"] },
-  { name: "antifungal", terms: ["antifungal","anti-fungal","antifungals","terbinafine","itraconazole","fluconazole","clotrimazole","miconazole","luliconazole","ciclopirox","oxiconazole","ketoconazole","এন্টিফাঙ্গাল","অ্যান্টিফাঙ্গাল","টারবিনাফিন","ইট্রাকোনাজল"] },
-  { name: "antibiotic", terms: ["antibiotic","antibiotics","mupirocin","fusidic","retapamulin","amoxicillin","cephalexin","clindamycin","gentamicin","neomycin","এন্টিবায়োটিক","অ্যান্টিবায়োটিক","মিউপিরোসিন","ফুসিডিক"] },
-  { name: "antihistamine", terms: ["antihistamine","antihistamines","diphenhydramine","এন্টি হিস্টামিন","অ্যান্টিহিস্টামিন","হিস্টামিন"] },
-  { name: "sunscreen / sunblock", terms: ["sunscreen","sunblock","sunblocks","spf","sunmask","ultraviolet","uv ","সানব্লক","সানস্ক্রিন","আল্ট্রাভায়োলেট","সানমাস্ক"] },
-  { name: "salicylic acid / keratolytic", terms: ["salicylic","keratolytic","keratolytics","salicid","prosalic","স্যালিসাইলিক","কেরাটোলাইটিক","কেরাটোলাইটিক্স"] },
-  { name: "tacrolimus", terms: ["tacrolimus","remus","ট্যাক্রোলিমাস","ট্যাকরোলিমাস"] },
-  { name: "minoxidil", terms: ["minoxidil","splendora","মিনোক্সিডিল"] },
-  { name: "retinoid", terms: ["retinoid","retinoids","tretinoin","adapalene","isotretinoin","retinoic","রেটিনয়েড","রেটিনয়িক","আইসোট্রেটিনইন"] },
-  { name: "phototherapy / light treatment", terms: ["phototherapy","photochemotherapy","puva","light treatment","ফটোথেরাপি","ফটোকেমোথেরাপি","আলোকরশ্মি"] },
-  { name: "cryotherapy / physical removal", terms: ["cryotherapy","electrosurgery","curettage","excision","laser","ক্রায়োথেরাপি","ইলেকট্রোসার্জারি","কিউরেটেজ","লেজার"] },
-  { name: "permethrin / ivermectin", terms: ["permethrin","ivermectin","crotamiton","scabex","alice","পারমেথ্রিন","ইভারমেকটিন","ক্রোটামিটন"] },
-  { name: "vitamin D analogue", terms: ["calcipotriol","vitamin d","dyvon","ক্যালসিপোট্রিয়ল","ভিটামিন ডি"] },
-];
-
-// Returns a concept if the question is about a treatment/ingredient rather than one disease.
 function detectConcept(question) {
   const q = normalize(question);
-  // If a specific disease is clearly named, treat it as a normal question.
   for (const d of DISEASES) {
     for (const kw of d.keywords) {
       const k = kw.toLowerCase().trim();
@@ -138,19 +146,16 @@ function detectConcept(question) {
   return null;
 }
 
-// Every passage mentioning the concept — not just the top few.
 function retrieveByConcept(group, allChunks, maxChunks = 24) {
-  const hits = allChunks.filter((c) => {
+  return allChunks.filter((c) => {
     const t = c.text.toLowerCase();
     return group.terms.some((term) => t.includes(term.toLowerCase().trim()));
-  });
-  return hits.slice(0, maxChunks);
+  }).slice(0, maxChunks);
 }
 
 // ---------- language & typo helpers ----------
-const hasBengali = (s) => /[\u0980-\u09FF]/.test(s);
+const hasBengali = (s) => /[ঀ-৿]/.test(s);
 
-// tiny edit-distance for typo detection
 function editDist(a, b) {
   const m = a.length, n = b.length;
   if (Math.abs(m - n) > 2) return 99;
@@ -162,7 +167,6 @@ function editDist(a, b) {
   return dp[m][n];
 }
 
-// If the question contains a near-miss of a disease name (typo), suggest it.
 function fuzzyDiseaseSuggestions(question) {
   const qNorm = normalize(question);
   const toks = qNorm.split(" ").filter((w) => w.length > 2);
@@ -185,10 +189,9 @@ function fuzzyDiseaseSuggestions(question) {
       }
     }
   }
-  if (exact.size > 0) return []; // condition clearly named — no need to double-check
+  if (exact.size > 0) return [];
   return [...near.values()].sort((a, b) => a.dist - b.dist).slice(0, 3).map((x) => x.d);
 }
-
 
 // ---------- multi-format file parsing ----------
 async function fileToText(file, onStatus, adminPass) {
@@ -240,15 +243,15 @@ async function fileToText(file, onStatus, adminPass) {
 export default function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [books, setBooks] = useState([]);
-  const [chunks, setChunks] = useState([]);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
-  const [dataLoaded, setDataLoaded] = useState(false); // true only after a successful load
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [zoom, setZoom] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [activeClassId, setActiveClassId] = useState(null); // null = show the gate
 
   // admin
   const [adminOpen, setAdminOpen] = useState(false);
@@ -257,19 +260,29 @@ export default function App() {
   const [passInput, setPassInput] = useState("");
   const [adminTab, setAdminTab] = useState("sources");
   const [uploadStatus, setUploadStatus] = useState("");
+  const [uploadClass, setUploadClass] = useState("");
   const [draft, setDraft] = useState(DEFAULT_SETTINGS);
   const [flash, setFlash] = useState("");
   const [pasteName, setPasteName] = useState("");
   const [pasteText, setPasteText] = useState("");
+  const [newClass, setNewClass] = useState({ name: "", bn: "", specialist: "" });
 
   const bottomRef = useRef(null);
   const fileRef = useRef(null);
+
+  const classes = settings.classes?.length ? settings.classes : DEFAULT_CLASSES;
+  const fallbackClassId = classes[0]?.id;
+  // Sources saved before therapeutic classes existed fall back to the first class.
+  const bookClass = (b) => b.category || fallbackClassId;
+  const activeClass = classes.find((c) => c.id === activeClassId) || null;
+  const classBooks = (id) => books.filter((b) => bookClass(b) === id);
 
   useEffect(() => {
     (async () => {
       try {
         const { settings: s, books: b } = await apiGetData();
         const merged = { ...DEFAULT_SETTINGS, ...(s || {}) };
+        if (!merged.classes?.length) merged.classes = DEFAULT_CLASSES;
         setSettings(merged); setDraft(merged); setBooks(b || []);
         setDataLoaded(true);
       } catch (e) { setLoadError(e.message); }
@@ -277,7 +290,6 @@ export default function App() {
     })();
   }, []);
 
-  useEffect(() => { setChunks(books.flatMap((b) => chunkText(b.text, b.name))); }, [books]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy]);
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") setZoom(null); };
@@ -287,18 +299,16 @@ export default function App() {
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("beforeinstallprompt", onInstall); };
   }, []);
 
-  const showFlash = (msg) => { setFlash(msg); setTimeout(() => setFlash(""), 2500); };
+  const showFlash = (msg) => { setFlash(msg); setTimeout(() => setFlash(""), 2600); };
 
-  // Sources are added/removed one at a time on the server, so this browser
-  // can never overwrite the whole list (which previously wiped sources when
-  // the page had loaded during a backend hiccup).
   const refreshBooks = async () => {
     try { const { books: b } = await apiGetData(); setBooks(b || []); } catch { /* keep current */ }
   };
 
-  const addBook = async (name, text) => {
+  const addBook = async (name, text, category) => {
     if (!dataLoaded) { showFlash("Still loading — please wait a moment"); return false; }
-    await apiAdmin(adminPass, { action: "addBook", book: { name, text } });
+    if (!category) { showFlash("Select a therapeutic class first"); return false; }
+    await apiAdmin(adminPass, { action: "addBook", book: { name, text, category } });
     await refreshBooks();
     return true;
   };
@@ -308,28 +318,41 @@ export default function App() {
     try {
       await apiAdmin(adminPass, { action: "removeBook", name });
       await refreshBooks();
-      showFlash("Removed ✓");
+      showFlash("Removed");
     } catch (e) { showFlash("Remove failed: " + e.message); }
+  };
+
+  const changeBookClass = async (name, category) => {
+    try {
+      await apiAdmin(adminPass, { action: "setBookCategory", name, category });
+      await refreshBooks();
+      showFlash("Class updated");
+    } catch (e) { showFlash("Update failed: " + e.message); }
   };
 
   const onAdminFile = async (e) => {
     const f = e.target.files?.[0];
     e.target.value = "";
     if (!f) return;
+    if (!uploadClass) { setUploadStatus("✕ Select a therapeutic class before uploading"); return; }
     setUploadStatus(`Processing ${f.name}…`);
     try {
       const text = await fileToText(f, setUploadStatus, adminPass);
       const name = f.name.replace(/\.[^.]+$/, "");
-      const ok = await addBook(name, text);
-      if (ok) setUploadStatus(`✓ Added "${name}" (${Math.round(text.length / 1000)}k characters) — saved permanently`);
+      const ok = await addBook(name, text, uploadClass);
+      if (ok) {
+        const cls = classes.find((c) => c.id === uploadClass);
+        setUploadStatus(`✓ Added "${name}" (${Math.round(text.length / 1000)}k characters) to ${cls?.name || uploadClass}`);
+      }
     } catch (err) { setUploadStatus(`✕ ${err.message}`); }
   };
 
-  const saveSettings = async () => {
-    const clean = { ...draft, chips: (Array.isArray(draft.chips) ? draft.chips : String(draft.chips).split("\n")).map((c) => c.trim()).filter(Boolean).slice(0, 6) };
+  const saveSettings = async (overrides) => {
+    const base = overrides || draft;
+    const clean = { ...base, classes: (base.classes || []).map((c) => ({ ...c, chips: Array.isArray(c.chips) ? c.chips : String(c.chips || "").split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 6) })) };
     try {
       await apiAdmin(adminPass, { action: "save", key: "settings", value: clean });
-      setSettings(clean); showFlash("Saved ✓");
+      setSettings(clean); setDraft(clean); showFlash("Saved");
     } catch (e) { showFlash("Save failed: " + e.message); }
   };
 
@@ -337,36 +360,41 @@ export default function App() {
     try {
       await apiAdmin(passInput, { action: "verify" });
       setAdminPass(passInput); setAdminAuthed(true); setPassInput("");
+      setUploadClass(classes[0]?.id || "");
     } catch { showFlash("Wrong passcode"); }
+  };
+
+  const startClass = (id) => {
+    setActiveClassId(id);
+    setMessages([]);
+    setInput("");
   };
 
   const ask = async () => {
     const q = input.trim();
-    if (!q || busy) return;
+    if (!q || busy || !activeClass) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", text: q }]);
     setBusy(true);
 
-    // Language of this message (decided here, not left to the AI)
+    // Only this therapeutic class's sources are searched.
+    const scoped = classBooks(activeClass.id).flatMap((b) => chunkText(b.text, b.name, bookClass(b)));
+
     const langRule = hasBengali(q)
       ? "The user wrote in Bangla. You MUST reply entirely in natural, fluent Bangla (বাংলা)."
       : "The user wrote in Latin script. If the message is English, reply entirely in English. If it is Bangla typed with English letters (Banglish), reply in Bangla.";
 
-    // Possible misspelled disease name → prepare a confirmation flow
-    const sugg = fuzzyDiseaseSuggestions(q);
+    const sugg = activeClass.images ? fuzzyDiseaseSuggestions(q) : [];
     const suggNames = sugg.map((d) => `${d.en} (${d.bn})`).join(", ");
 
-    // For short follow-ups ("yes", "হ্যাঁ") include recent turns so retrieval still finds the right topic;
-    // if a typo was detected, also search using the corrected names.
     const retrievalQuery =
       (q.length < 25 ? messages.slice(-4).map((m) => m.text).join(" ") + " " : "") +
       q +
       (sugg.length ? " " + sugg.map((d) => d.en + " " + d.bn + " " + d.keywords.join(" ")).join(" ") : "");
 
-    // "Where is X used?" style questions get every relevant passage, not just the top few.
     const concept = detectConcept(q);
-    let hits = concept ? retrieveByConcept(concept, chunks) : retrieve(retrievalQuery, chunks, 8);
-    if (concept && hits.length === 0) hits = retrieve(retrievalQuery, chunks, 8);
+    let hits = concept ? retrieveByConcept(concept, scoped) : retrieve(retrievalQuery, scoped, 8);
+    if (concept && hits.length === 0) hits = retrieve(retrievalQuery, scoped, 8);
 
     let context = hits.length ? hits.map((h) => h.text).join("\n\n---\n\n") : "(no matching information found)";
     if (context.length > 28000) context = context.slice(0, 28000);
@@ -374,21 +402,27 @@ export default function App() {
     const conceptRule = concept
       ? `\nTHIS IS AN OVERVIEW QUESTION about "${concept.name}". The passages below come from across the whole knowledge base. List EVERY condition in them where this is used or recommended — do not stop at one or two. Give a one-line reason for each, group related conditions together, and start with a short plain-language explanation of what it does and why it helps. End with [topic: none] since the answer covers many conditions.\n`
       : "";
+
+    const topicRule = activeClass.images
+      ? `\n8. TOPIC TAG (required): after your complete answer, on a new final line, write exactly [topic: <id>] where <id> is the ONE condition your answer is mainly about, chosen ONLY from this list: ${DISEASES.map((d) => d.id).join(", ")}. If the message is a greeting, small talk, or your answer is not mainly about one of these conditions, write [topic: none]. This line is hidden from the user.`
+      : "";
+
     const historyText = messages.slice(-6).map((m) => `${m.role === "user" ? "User" : "You"}: ${m.text}`).join("\n");
 
-    const prompt = `You are the assistant behind "${settings.appName}" — a warm, friendly and professional skin-health guide for users in Bangladesh.
+    const prompt = `You are the assistant behind "${settings.appName}", answering questions in the ${activeClass.name} (${activeClass.bn}) therapeutic area for users in Bangladesh. You are warm, friendly and professional.
 
 HOW TO ANSWER:
 1. Base your answer ONLY on the reference information below. Never invent facts, doses, or medicine names that are not in it.
 2. Speak naturally and conversationally, like a caring pharmacist explaining things to a person. NEVER mention "the book", "the text", "excerpts", "sources", "documents" or "reference". Answer as if this is your own knowledge.
 3. LANGUAGE (strict): ${langRule} Do not mix languages, except medicine/product names which may stay in English.
 4. Keep answers clear and human — short paragraphs; a short list only when listing symptoms or treatment options.
-5. If the user greets you or makes small talk, respond warmly and invite them to ask about any skin condition.
-6. If the question is not covered by the reference information, say honestly and kindly that you don't have details on that and suggest consulting a dermatologist. Do not guess.
-7. For treatment questions, you may end with one brief caring reminder to consult a doctor before using medicines, when natural — not every message.
-8. TOPIC TAG (required): after your complete answer, on a new final line, write exactly [topic: <id>] where <id> is the ONE condition your answer is mainly about, chosen ONLY from this list: impetigo, tinea_pedis, tinea_corporis, tinea_cruris, tinea_capitis, tinea_faciei, tinea_manuum, onychomycosis, tinea_versicolor, scabies, atopic_eczema, seborrheic_eczema, discoid_eczema, pompholyx, contact_dermatitis, varicose_eczema, lichen_simplex, lichen_planus, insect_bites, psoriasis, scalp_psoriasis, melasma, acne, warts, corns_calluses, alopecia, vitiligo, dry_skin, sunburn, hirsutism. If the message is a greeting, small talk, or your answer is not mainly about one of these conditions, write [topic: none]. This line is hidden from the user.
+5. If the user greets you or makes small talk, respond warmly and invite them to ask about this area.
+6. This conversation is limited to ${activeClass.name}. If the question is about a different medical area, or is not covered by the reference information, say honestly and kindly that you don't have details on that here, and suggest consulting a ${activeClass.specialist}. Do not guess.
+7. For treatment questions, you may end with one brief caring reminder to consult a doctor before using medicines, when natural — not every message.${topicRule}
+${conceptRule}${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's message seems to contain a misspelled condition name. Most likely they mean: ${suggNames}. Do NOT give the full answer yet. Reply with ONE short, friendly question confirming which condition they mean (in the user's language, e.g. "আপনি কি সোরিয়াসিস (Psoriasis) বুঝাতে চেয়েছেন?" / "Did you mean Psoriasis?"). If there are multiple likely options, list them briefly. End this confirmation message with [topic: none].\n\n` : ""}${historyText ? `Conversation so far:\n${historyText}\n\n` : ""}REFERENCE INFORMATION (never mention it):
+${context}
 
-${conceptRule}${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's message seems to contain a misspelled condition name. Most likely they mean: ${suggNames}. Do NOT give the full answer yet. Reply with ONE short, friendly question confirming which condition they mean (in the user's language, e.g. "আপনি কি সোরিয়াসিস (Psoriasis) বুঝাতে চেয়েছেন?" / "Did you mean Psoriasis?"). If there are multiple likely options, list them briefly. End this confirmation message with [topic: none].\n\n` : ""}${historyText ? `Conversation so far:\n${historyText}\n\n` : ""}REFERENCE INFORMATION (never mention it):\n${context}\n\nUser's message: ${q}`;
+User's message: ${q}`;
 
     try {
       const data = await apiClaude([{ role: "user", content: prompt }]);
@@ -398,77 +432,191 @@ ${conceptRule}${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's me
       if (tagMatch) {
         answer = answer.slice(0, tagMatch.index).trim();
         const id = tagMatch[1].toLowerCase();
-        if (id !== "none") disease = DISEASES.find((d) => d.id === id) || null;
-      } else {
+        if (id !== "none" && activeClass.images) disease = DISEASES.find((d) => d.id === id) || null;
+      } else if (activeClass.images) {
         disease = detectDisease(q + " " + answer);
       }
-            setMessages((m) => [...m, { role: "assistant", text: answer || "Hmm, something went wrong — please try again.", disease: disease || null }]);
+      setMessages((m) => [...m, { role: "assistant", text: answer || "Something went wrong — please try again.", disease }]);
     } catch {
       setMessages((m) => [...m, { role: "assistant", text: "I couldn't connect just now. Please check your internet and try again." }]);
     }
     setBusy(false);
   };
 
-  const A = settings.accent || "#0F9B8E";
-  const S = { ink: "#0F172A", sub: "#64748B", border: "#E5EBF0" };
+  // ---------- design tokens ----------
+  const A = activeClass?.color || settings.accent || "#0F9B8E";
+  const S = { ink: "#0B1220", body: "#334155", sub: "#64748B", line: "#E6EBF1", card: "#FFFFFF" };
   const grad = `linear-gradient(135deg, ${A}, ${A}CC)`;
-  const inputStyle = { width: "100%", boxSizing: "border-box", padding: "10px 14px", border: `1px solid ${S.border}`, borderRadius: 12, fontSize: 13.5, outline: "none", fontFamily: "inherit" };
-  const labelStyle = { fontSize: 12, fontWeight: 700, color: S.sub, textTransform: "uppercase", letterSpacing: 0.5, display: "block", margin: "14px 0 6px" };
+  const shell = {
+    minHeight: "100dvh",
+    background: "radial-gradient(1200px 600px at 15% -5%, #EEF6F7 0%, transparent 60%), linear-gradient(175deg, #FBFDFE 0%, #F2F6F8 100%)",
+    color: S.ink,
+    fontFamily: "'Inter', 'Segoe UI', system-ui, -apple-system, 'Noto Sans Bengali', sans-serif",
+    display: "flex", flexDirection: "column",
+  };
+  const inputStyle = { width: "100%", boxSizing: "border-box", padding: "11px 14px", border: `1px solid ${S.line}`, borderRadius: 12, fontSize: 13.5, outline: "none", fontFamily: "inherit", color: S.ink, background: "#fff" };
+  const labelStyle = { fontSize: 11, fontWeight: 700, color: S.sub, textTransform: "uppercase", letterSpacing: 0.7, display: "block", margin: "16px 0 6px" };
+  const miniLabel = { fontSize: 10.5, fontWeight: 650, color: "#8B98A8", letterSpacing: 0.4, display: "block", marginBottom: 4 };
+  const btn = (bg, fg = "#fff") => ({ background: bg, color: fg, border: "none", borderRadius: 12, padding: "11px 20px", fontSize: 13.5, fontWeight: 650, cursor: "pointer" });
+  // Two letters from the first word, so every class tile reads the same way.
+  const monogram = (c) => {
+    const w = (c.name || "?").replace(/[^A-Za-z ]/g, "").trim().split(" ")[0] || "?";
+    return (w[0] || "?").toUpperCase() + (w[1] || "").toLowerCase();
+  };
+
+  const globalCss = `
+    @keyframes blink { 0%,80%,100%{opacity:.25;transform:translateY(0)} 40%{opacity:1;transform:translateY(-3px)} }
+    @keyframes pop { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    .msg { animation: pop .26s cubic-bezier(.2,.7,.3,1) both; }
+    .tile { transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+    .tile:hover { transform: translateY(-3px); box-shadow: 0 14px 34px rgba(11,18,32,.10); }
+    input::placeholder, textarea::placeholder { color:#94A3B8; }
+    button { font-family: inherit; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: #D7DEE6; border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+  `;
+
+  const adminLink = (
+    <button onClick={() => setAdminOpen(true)}
+      style={{ background: "none", border: "none", color: "#B6C2CF", fontSize: 11, cursor: "pointer", padding: "4px 6px", letterSpacing: 0.3 }}>
+      Admin
+    </button>
+  );
+
+  // ================= THERAPEUTIC CLASS GATE =================
+  if (!activeClassId) {
+    return (
+      <div style={shell}>
+        <style>{globalCss}</style>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 20px" }}>
+          <div style={{ width: "100%", maxWidth: 820 }}>
+            <div style={{ textAlign: "center", marginBottom: 34 }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: 18, margin: "0 auto 16px",
+                background: `linear-gradient(135deg, ${settings.accent}, ${settings.accent}BB)`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "#fff", fontSize: 26, boxShadow: `0 10px 26px ${settings.accent}44`,
+              }}>✚</div>
+              <div style={{ fontSize: 13, fontWeight: 700, letterSpacing: 1.6, color: S.sub, textTransform: "uppercase" }}>{settings.appName}</div>
+              <h1 style={{ fontSize: 30, lineHeight: 1.2, letterSpacing: -0.6, margin: "10px 0 8px", fontWeight: 750 }}>{settings.gateHeading}</h1>
+              <p style={{ fontSize: 14.5, color: S.body, maxWidth: 480, margin: "0 auto", lineHeight: 1.65 }}>{settings.gateSub}</p>
+            </div>
+
+            {loadError ? (
+              <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B", borderRadius: 16, padding: "16px 20px", fontSize: 13.5, textAlign: "center" }}>
+                Couldn't reach the server. Please refresh in a moment.
+              </div>
+            ) : !loaded ? (
+              <div style={{ textAlign: "center", color: S.sub, fontSize: 13.5 }}>Loading…</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 14 }}>
+                {classes.map((c) => {
+                  const count = classBooks(c.id).length;
+                  const ready = count > 0;
+                  return (
+                    <button key={c.id} className={ready ? "tile" : ""} disabled={!ready}
+                      onClick={() => ready && startClass(c.id)}
+                      style={{
+                        textAlign: "left", background: S.card,
+                        border: `1px solid ${ready ? S.line : "#EDF1F5"}`,
+                        borderRadius: 18, padding: "18px 18px 16px", cursor: ready ? "pointer" : "default",
+                        opacity: ready ? 1 : 0.55,
+                        boxShadow: ready ? "0 2px 10px rgba(11,18,32,.04)" : "none",
+                        display: "flex", flexDirection: "column", gap: 12, minHeight: 132,
+                      }}>
+                      <div style={{
+                        width: 42, height: 42, borderRadius: 13, flexShrink: 0,
+                        background: ready ? `linear-gradient(135deg, ${c.color}, ${c.color}BB)` : "#E2E8F0",
+                        color: "#fff", fontWeight: 750, fontSize: 15, letterSpacing: 0.5,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>{monogram(c)}</div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 15.5, letterSpacing: -0.2 }}>{c.name}</div>
+                        <div style={{ fontSize: 13, color: S.sub, marginTop: 2 }}>{c.bn}</div>
+                      </div>
+                      <div style={{ marginTop: "auto", fontSize: 11.5, fontWeight: 650, color: ready ? c.color : "#94A3B8", letterSpacing: 0.3 }}>
+                        {ready ? `${count} source${count > 1 ? "s" : ""} available` : "Content coming soon"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ marginTop: 28, display: "flex", justifyContent: "center", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 11.5, color: "#94A3B8", textAlign: "center" }}>{settings.disclaimer}</span>
+              {adminLink}
+            </div>
+          </div>
+        </div>
+        {adminOpen && renderAdmin()}
+      </div>
+    );
+  }
+
+  // ================= CHAT =================
+  const chips = (activeClass.chips && activeClass.chips.length ? activeClass.chips : []).slice(0, 6);
+  const hasSources = classBooks(activeClass.id).length > 0;
 
   return (
-    <div style={{
-      minHeight: "100vh", minHeight: "100dvh",
-      background: "linear-gradient(160deg, #FAFCFD 0%, #F0F7F6 55%, #EDF4F8 100%)",
-      color: S.ink, fontFamily: "'Segoe UI', system-ui, -apple-system, 'Noto Sans Bengali', sans-serif",
-      display: "flex", flexDirection: "column",
-    }}>
-      <style>{`
-        @keyframes blink { 0%,80%,100%{opacity:.25;transform:translateY(0)} 40%{opacity:1;transform:translateY(-3px)} }
-        @keyframes pop { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-        .msg { animation: pop .25s ease both; }
-        input::placeholder, textarea::placeholder { color:#94A3B8; }
-        button { font-family: inherit; }
-      `}</style>
+    <div style={shell}>
+      <style>{globalCss}</style>
 
-      {/* Header */}
       <header style={{
-        position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,0.85)", backdropFilter: "blur(12px)",
-        borderBottom: `1px solid ${S.border}`, padding: "12px 20px", paddingTop: "calc(12px + env(safe-area-inset-top))",
-        display: "flex", alignItems: "center", gap: 12,
+        position: "sticky", top: 0, zIndex: 20,
+        background: "rgba(255,255,255,0.82)", backdropFilter: "blur(14px)",
+        borderBottom: `1px solid ${S.line}`,
+        padding: "11px 16px", paddingTop: "calc(11px + env(safe-area-inset-top))",
+        display: "flex", alignItems: "center", gap: 11,
       }}>
-        <div style={{ width: 40, height: 40, borderRadius: 14, background: grad, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 20, boxShadow: `0 4px 12px ${A}55` }}>✚</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 17, letterSpacing: -0.2 }}>{settings.appName}</div>
-          <div style={{ fontSize: 12, color: S.sub }}>{settings.tagline}</div>
+        <div style={{ width: 38, height: 38, borderRadius: 13, background: grad, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 18, boxShadow: `0 6px 16px ${A}40`, flexShrink: 0 }}>✚</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15.5, letterSpacing: -0.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{settings.appName}</div>
+          <div style={{ fontSize: 11.5, color: S.sub }}>{settings.tagline}</div>
         </div>
+        <button onClick={() => setActiveClassId(null)} title="Change therapeutic area"
+          style={{
+            display: "flex", alignItems: "center", gap: 7, background: `${A}12`,
+            border: `1px solid ${A}33`, borderRadius: 999, padding: "7px 13px",
+            fontSize: 12.5, fontWeight: 650, color: A, cursor: "pointer", maxWidth: 190,
+          }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: A, flexShrink: 0 }} />
+          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{activeClass.name}</span>
+          <span style={{ opacity: 0.65, fontSize: 11 }}>▾</span>
+        </button>
         {installPrompt && (
           <button onClick={async () => { installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); }}
-            style={{ background: grad, color: "#fff", border: "none", borderRadius: 999, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
-            ⬇ Install app
-          </button>
+            style={{ ...btn(grad), padding: "8px 13px", fontSize: 12, borderRadius: 999 }}>Install</button>
         )}
       </header>
 
-      {/* Chat */}
-      <main style={{ flex: 1, overflowY: "auto", padding: "24px 16px" }}>
+      <main style={{ flex: 1, overflowY: "auto", padding: "26px 16px" }}>
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
-          {messages.length === 0 && loaded && (
-            <div style={{ textAlign: "center", marginTop: 40 }}>
-              <div style={{ fontSize: 44 }}>🩺</div>
-              <div style={{ fontWeight: 700, fontSize: 21, marginTop: 8, letterSpacing: -0.3 }}>{settings.welcome}</div>
-              <p style={{ fontSize: 14, color: S.sub, maxWidth: 420, margin: "8px auto 18px", lineHeight: 1.6 }}>{settings.welcomeSub}</p>
-              {loadError ? (
-                <div style={{ fontSize: 13, color: "#B91C1C", background: "#fff", border: `1px solid ${S.border}`, borderRadius: 14, padding: "14px 18px", display: "inline-block" }}>
-                  Couldn't reach the server. Please refresh in a moment.
-                </div>
-              ) : books.length === 0 ? (
-                <div style={{ fontSize: 13, color: S.sub, background: "#fff", border: `1px solid ${S.border}`, borderRadius: 14, padding: "14px 18px", display: "inline-block" }}>
-                  ⏳ The knowledge base is being set up. Please check back soon.
+          {messages.length === 0 && (
+            <div style={{ textAlign: "center", marginTop: 34 }}>
+              <div style={{
+                width: 52, height: 52, borderRadius: 16, margin: "0 auto 14px",
+                background: `${A}14`, border: `1px solid ${A}2E`, color: A,
+                display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 750, fontSize: 16,
+              }}>{monogram(activeClass)}</div>
+              <div style={{ fontWeight: 720, fontSize: 21, letterSpacing: -0.4 }}>
+                Ask about {activeClass.name.toLowerCase()}
+              </div>
+              <p style={{ fontSize: 14, color: S.body, maxWidth: 420, margin: "8px auto 20px", lineHeight: 1.65 }}>
+                Symptoms, causes or treatment — English বা বাংলা, যেভাবে সুবিধা।
+              </p>
+              {!hasSources ? (
+                <div style={{ fontSize: 13, color: S.sub, background: S.card, border: `1px solid ${S.line}`, borderRadius: 14, padding: "14px 18px", display: "inline-block" }}>
+                  No content has been added for this area yet.
                 </div>
               ) : (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-                  {settings.chips.map((s) => (
-                    <button key={s} onClick={() => setInput(s)} style={{ background: "#fff", border: `1px solid ${S.border}`, borderRadius: 999, padding: "8px 16px", fontSize: 13, cursor: "pointer", color: S.ink, boxShadow: "0 1px 3px rgba(15,23,42,0.05)" }}>{s}</button>
+                  {chips.map((s) => (
+                    <button key={s} onClick={() => setInput(s)} style={{
+                      background: S.card, border: `1px solid ${S.line}`, borderRadius: 999,
+                      padding: "9px 16px", fontSize: 13, cursor: "pointer", color: S.body,
+                      boxShadow: "0 1px 3px rgba(11,18,32,.04)",
+                    }}>{s}</button>
                   ))}
                 </div>
               )}
@@ -478,28 +626,34 @@ ${conceptRule}${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's me
           {messages.map((m, i) => (
             <div key={i} className="msg" style={{ margin: "16px 0", display: "flex", gap: 10, justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
               {m.role === "assistant" && (
-                <div style={{ width: 32, height: 32, borderRadius: 12, flexShrink: 0, marginTop: 2, background: grad, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 15 }}>✚</div>
+                <div style={{ width: 30, height: 30, borderRadius: 11, flexShrink: 0, marginTop: 3, background: grad, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 14 }}>✚</div>
               )}
-              <div style={{ maxWidth: "82%" }}>
+              <div style={{ maxWidth: "84%" }}>
                 {m.role === "assistant" && m.disease && DISEASE_IMAGES[m.disease.id] && (
-                  <div onClick={() => setZoom(m.disease)} title="Tap to enlarge" style={{ background: "#fff", border: `1px solid ${S.border}`, borderRadius: 18, padding: 10, marginBottom: 8, display: "inline-flex", alignItems: "center", gap: 12, boxShadow: "0 2px 10px rgba(15,23,42,0.05)", cursor: "zoom-in" }}>
+                  <div onClick={() => setZoom(m.disease)} title="Tap to enlarge" style={{
+                    background: S.card, border: `1px solid ${S.line}`, borderRadius: 18,
+                    padding: 9, marginBottom: 8, display: "inline-flex", alignItems: "center", gap: 12,
+                    boxShadow: "0 2px 10px rgba(11,18,32,.05)", cursor: "zoom-in",
+                  }}>
                     <div style={{ position: "relative" }}>
-                      <img src={DISEASE_IMAGES[m.disease.id]} alt={m.disease.en} style={{ width: 92, height: 92, borderRadius: 14, objectFit: "cover", display: "block" }} />
-                      <div style={{ position: "absolute", right: 5, bottom: 5, width: 22, height: 22, borderRadius: 8, background: "rgba(15,23,42,0.55)", color: "#fff", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>🔍</div>
+                      <img src={DISEASE_IMAGES[m.disease.id]} alt={m.disease.en}
+                        style={{ width: 88, height: 88, borderRadius: 13, objectFit: "cover", display: "block" }} />
+                      <div style={{ position: "absolute", right: 5, bottom: 5, width: 21, height: 21, borderRadius: 8, background: "rgba(11,18,32,0.58)", color: "#fff", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>⤢</div>
                     </div>
-                    <div>
+                    <div style={{ paddingRight: 6 }}>
                       <div style={{ fontWeight: 700, fontSize: 13.5 }}>{m.disease.en}</div>
                       <div style={{ fontSize: 12.5, color: S.sub }}>{m.disease.bn}</div>
-                      <div style={{ fontSize: 11, color: "#94A3B8", marginTop: 3 }}>Tap to enlarge</div>
+                      <div style={{ fontSize: 11, color: "#A3AEBB", marginTop: 3 }}>Tap to enlarge</div>
                     </div>
                   </div>
                 )}
                 <div style={{
-                  background: m.role === "user" ? grad : "#fff", color: m.role === "user" ? "#fff" : S.ink,
-                  border: m.role === "user" ? "none" : `1px solid ${S.border}`,
+                  background: m.role === "user" ? grad : S.card,
+                  color: m.role === "user" ? "#fff" : S.body,
+                  border: m.role === "user" ? "none" : `1px solid ${S.line}`,
                   borderRadius: m.role === "user" ? "20px 20px 6px 20px" : "20px 20px 20px 6px",
-                  padding: "13px 17px", fontSize: 14.5, lineHeight: 1.65, whiteSpace: "pre-wrap",
-                  boxShadow: m.role === "user" ? `0 3px 12px ${A}40` : "0 2px 10px rgba(15,23,42,0.05)",
+                  padding: "13px 17px", fontSize: 14.5, lineHeight: 1.7, whiteSpace: "pre-wrap",
+                  boxShadow: m.role === "user" ? `0 4px 14px ${A}38` : "0 2px 10px rgba(11,18,32,.05)",
                 }}>{m.text}</div>
               </div>
             </div>
@@ -507,8 +661,8 @@ ${conceptRule}${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's me
 
           {busy && (
             <div className="msg" style={{ display: "flex", gap: 10, margin: "16px 0" }}>
-              <div style={{ width: 32, height: 32, borderRadius: 12, background: grad, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 15 }}>✚</div>
-              <div style={{ background: "#fff", border: `1px solid ${S.border}`, borderRadius: "20px 20px 20px 6px", padding: "16px 18px", display: "flex", gap: 5 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 11, background: grad, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 14 }}>✚</div>
+              <div style={{ background: S.card, border: `1px solid ${S.line}`, borderRadius: "20px 20px 20px 6px", padding: "16px 18px", display: "flex", gap: 5 }}>
                 {[0, 1, 2].map((d) => <span key={d} style={{ width: 7, height: 7, borderRadius: "50%", background: A, animation: `blink 1.2s ${d * 0.2}s infinite` }} />)}
               </div>
             </div>
@@ -517,147 +671,283 @@ ${conceptRule}${sugg.length ? `IMPORTANT — POSSIBLE MISSPELLING: The user's me
         </div>
       </main>
 
-      {/* Input */}
       <footer style={{ padding: "12px 16px", paddingBottom: "calc(14px + env(safe-area-inset-bottom))" }}>
-        <div style={{ maxWidth: 720, margin: "0 auto", background: "#fff", border: `1px solid ${S.border}`, borderRadius: 999, boxShadow: "0 6px 24px rgba(15,23,42,0.08)", display: "flex", alignItems: "center", padding: "6px 6px 6px 20px", gap: 8 }}>
+        <div style={{ maxWidth: 720, margin: "0 auto", background: S.card, border: `1px solid ${S.line}`, borderRadius: 999, boxShadow: "0 8px 28px rgba(11,18,32,.08)", display: "flex", alignItems: "center", padding: "6px 6px 6px 20px", gap: 8 }}>
           <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ask()}
-            placeholder={books.length ? "Ask about any skin problem… / প্রশ্ন লিখুন…" : "Knowledge base is being prepared…"}
-            disabled={!books.length}
+            placeholder={hasSources ? "Ask a question… / প্রশ্ন লিখুন…" : "No content in this area yet"}
+            disabled={!hasSources}
             style={{ flex: 1, border: "none", outline: "none", fontSize: 14.5, background: "transparent", color: S.ink, minWidth: 0 }} />
-          <button onClick={ask} disabled={busy || !input.trim()} style={{ width: 42, height: 42, borderRadius: "50%", border: "none", background: busy || !input.trim() ? "#CBD5E1" : grad, color: "#fff", fontSize: 17, cursor: busy || !input.trim() ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>➤</button>
+          <button onClick={ask} disabled={busy || !input.trim()} style={{
+            width: 42, height: 42, borderRadius: "50%", border: "none",
+            background: busy || !input.trim() ? "#CBD5E1" : grad,
+            color: "#fff", fontSize: 16, cursor: busy || !input.trim() ? "default" : "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+          }}>➤</button>
         </div>
-        <div style={{ maxWidth: 720, margin: "8px auto 0", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#94A3B8" }}>
+        <div style={{ maxWidth: 720, margin: "9px auto 0", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#94A3B8" }}>
           <span style={{ flex: 1, textAlign: "center" }}>{settings.disclaimer}</span>
-          <button onClick={() => setAdminOpen(true)} style={{ background: "none", border: "none", color: "#CBD5E1", fontSize: 11, cursor: "pointer", padding: "2px 4px" }}>Admin</button>
+          {adminLink}
         </div>
       </footer>
 
-      {/* ===================== ADMIN PANEL ===================== */}
-      {adminOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(10,15,25,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div style={{ background: "#fff", borderRadius: 22, width: "min(94vw, 640px)", maxHeight: "88vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.4)", animation: "pop .2s ease both" }}>
-            <div style={{ padding: "16px 22px", borderBottom: `1px solid ${S.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: "#fff", zIndex: 2, borderRadius: "22px 22px 0 0" }}>
-              <div style={{ fontWeight: 800, fontSize: 16 }}>⚙️ Admin Panel</div>
-              <button onClick={() => { setAdminOpen(false); setAdminAuthed(false); setAdminPass(""); setPassInput(""); }} style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${S.border}`, background: "#F8FAFC", cursor: "pointer" }}>✕</button>
-            </div>
-
-            {!adminAuthed ? (
-              <div style={{ padding: "30px 22px 34px", textAlign: "center" }}>
-                <div style={{ fontSize: 36 }}>🔐</div>
-                <div style={{ fontWeight: 700, marginTop: 8 }}>Administrator access</div>
-                <p style={{ fontSize: 13, color: S.sub }}>Enter the admin passcode to manage this platform.</p>
-                <input type="password" value={passInput} onChange={(e) => setPassInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && tryUnlock()}
-                  placeholder="Passcode" style={{ ...inputStyle, maxWidth: 240, margin: "10px auto 0", textAlign: "center" }} />
-                <div>
-                  <button onClick={tryUnlock} style={{ marginTop: 12, background: grad, color: "#fff", border: "none", borderRadius: 12, padding: "10px 26px", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>Unlock</button>
-                </div>
-                {flash && <div style={{ marginTop: 10, fontSize: 12.5, color: "#B91C1C" }}>{flash}</div>}
-              </div>
-            ) : (
-              <div style={{ padding: "16px 22px 26px" }}>
-                <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-                  {[["sources", "📚 Sources"], ["branding", "🎨 Branding"], ["security", "🔐 Security"]].map(([id, label]) => (
-                    <button key={id} onClick={() => setAdminTab(id)} style={{ padding: "8px 16px", borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: "pointer", border: `1px solid ${adminTab === id ? A : S.border}`, background: adminTab === id ? A : "#fff", color: adminTab === id ? "#fff" : S.ink }}>{label}</button>
-                  ))}
-                </div>
-
-                {adminTab === "sources" && (
-                  <div>
-                    <p style={{ fontSize: 13, color: S.sub, marginTop: 0 }}>These files power every user's answers. Supported: <b>.txt, .md, .docx, .pdf, .csv, .xlsx</b></p>
-                    {!dataLoaded && (
-                      <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, marginBottom: 10 }}>
-                        ⚠️ Couldn't load the current sources from the server. Uploading is disabled until this page loads them successfully — please refresh.
-                      </div>
-                    )}
-                    {books.map((b) => (
-                      <div key={b.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#F8FAFC", border: `1px solid ${S.border}`, borderRadius: 14, padding: "10px 14px", marginBottom: 8 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <span style={{ fontSize: 18 }}>📗</span>
-                          <div>
-                            <div style={{ fontWeight: 600, fontSize: 13.5 }}>{b.name}</div>
-                            <div style={{ fontSize: 11.5, color: S.sub }}>{Math.round(b.text.length / 1000)}k characters</div>
-                          </div>
-                        </div>
-                        <button onClick={() => removeBook(b.name)} style={{ background: "transparent", border: `1px solid ${S.border}`, borderRadius: 10, padding: "6px 12px", fontSize: 12, cursor: "pointer", color: "#B91C1C" }}>Remove</button>
-                      </div>
-                    ))}
-                    {books.length === 0 && (
-                      <div style={{ fontSize: 13, color: S.sub, padding: "8px 0" }}>
-                        No sources yet.{" "}
-                        <button onClick={async () => { try { const r = await apiAdmin(adminPass, { action: "restoreBooks" }); await refreshBooks(); showFlash(`Restored ${r.restored} source(s) ✓`); } catch (e) { showFlash(e.message); } }}
-                          style={{ background: "none", border: "none", color: A, fontWeight: 700, fontSize: 13, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
-                          Restore last backup
-                        </button>
-                      </div>
-                    )}
-                    <button onClick={() => fileRef.current?.click()} style={{ background: grad, color: "#fff", border: "none", borderRadius: 12, padding: "10px 18px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", marginTop: 6 }}>⬆ Upload source file</button>
-                    <input ref={fileRef} type="file" accept=".txt,.md,.docx,.pdf,.csv,.xlsx,.xls" onChange={onAdminFile} style={{ display: "none" }} />
-                    {uploadStatus && <div style={{ fontSize: 12.5, marginTop: 10, color: uploadStatus.startsWith("✕") ? "#B91C1C" : S.sub }}>{uploadStatus}</div>}
-
-                    <label style={labelStyle}>Or paste text directly</label>
-                    <input value={pasteName} onChange={(e) => setPasteName(e.target.value)} placeholder="Source name" style={{ ...inputStyle, marginBottom: 8 }} />
-                    <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder="Paste content…" rows={4} style={{ ...inputStyle, resize: "vertical" }} />
-                    <button disabled={!pasteText.trim()}
-                      onClick={async () => { const n = pasteName.trim() || "Pasted source"; try { const ok = await addBook(n, pasteText); if (ok) { setPasteName(""); setPasteText(""); showFlash("Added ✓"); } } catch (e) { showFlash("Save failed: " + e.message); } }}
-                      style={{ marginTop: 8, background: pasteText.trim() ? S.ink : "#CBD5E1", color: "#fff", border: "none", borderRadius: 12, padding: "9px 16px", fontSize: 13, fontWeight: 600, cursor: pasteText.trim() ? "pointer" : "default" }}>Add pasted text</button>
-                    {flash && <div style={{ marginTop: 10, fontSize: 12.5, color: A, fontWeight: 600 }}>{flash}</div>}
-                  </div>
-                )}
-
-                {adminTab === "branding" && (
-                  <div>
-                    <label style={labelStyle}>App name</label>
-                    <input value={draft.appName} onChange={(e) => setDraft({ ...draft, appName: e.target.value })} style={inputStyle} />
-                    <label style={labelStyle}>Tagline</label>
-                    <input value={draft.tagline} onChange={(e) => setDraft({ ...draft, tagline: e.target.value })} style={inputStyle} />
-                    <label style={labelStyle}>Welcome heading</label>
-                    <input value={draft.welcome} onChange={(e) => setDraft({ ...draft, welcome: e.target.value })} style={inputStyle} />
-                    <label style={labelStyle}>Welcome subtitle</label>
-                    <textarea value={draft.welcomeSub} onChange={(e) => setDraft({ ...draft, welcomeSub: e.target.value })} rows={2} style={{ ...inputStyle, resize: "vertical" }} />
-                    <label style={labelStyle}>Suggested questions (one per line, max 6)</label>
-                    <textarea value={Array.isArray(draft.chips) ? draft.chips.join("\n") : draft.chips} onChange={(e) => setDraft({ ...draft, chips: e.target.value })} rows={4} style={{ ...inputStyle, resize: "vertical" }} />
-                    <label style={labelStyle}>Disclaimer text</label>
-                    <input value={draft.disclaimer} onChange={(e) => setDraft({ ...draft, disclaimer: e.target.value })} style={inputStyle} />
-                    <label style={labelStyle}>Theme color</label>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {["#0F9B8E", "#2563EB", "#7C3AED", "#DB2777", "#EA580C", "#16A34A"].map((c) => (
-                        <button key={c} onClick={() => setDraft({ ...draft, accent: c })} style={{ width: 34, height: 34, borderRadius: 12, border: draft.accent === c ? `3px solid ${S.ink}` : "3px solid transparent", background: c, cursor: "pointer" }} />
-                      ))}
-                    </div>
-                    <button onClick={saveSettings} style={{ marginTop: 18, background: grad, color: "#fff", border: "none", borderRadius: 12, padding: "10px 22px", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>Save changes</button>
-                    {flash && <span style={{ marginLeft: 12, fontSize: 13, color: A, fontWeight: 600 }}>{flash}</span>}
-                  </div>
-                )}
-
-                {adminTab === "security" && (
-                  <div style={{ fontSize: 13.5, lineHeight: 1.7, color: S.ink }}>
-                    <p style={{ marginTop: 0 }}>Your admin passcode is stored securely on the server — not in this app — so users can never discover it.</p>
-                    <p><b>To change it:</b> open your Vercel dashboard → your project → <b>Settings → Environment Variables</b> → edit <code>ADMIN_PASSCODE</code> → then <b>Deployments → Redeploy</b>. The new passcode takes effect in about a minute.</p>
-                    <p style={{ color: S.sub }}>Your AI key and database keys are also kept server-side and never sent to users' phones.</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Image lightbox */}
       {zoom && DISEASE_IMAGES[zoom.id] && (
-        <div onClick={() => setZoom(null)} style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(10,15,25,0.82)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", animation: "pop .18s ease both", cursor: "zoom-out", padding: 20 }}>
+        <div onClick={() => setZoom(null)} style={{
+          position: "fixed", inset: 0, zIndex: 100, background: "rgba(8,13,22,0.84)", backdropFilter: "blur(7px)",
+          display: "flex", alignItems: "center", justifyContent: "center", animation: "pop .18s ease both", cursor: "zoom-out", padding: 20,
+        }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 22, padding: 14, maxWidth: "min(92vw, 560px)", boxShadow: "0 24px 80px rgba(0,0,0,0.45)", cursor: "default" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 16 }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 16 }}>{zoom.en}</div>
                 <div style={{ fontSize: 13, color: S.sub }}>{zoom.bn}</div>
               </div>
-              <button onClick={() => setZoom(null)} style={{ width: 34, height: 34, borderRadius: 12, border: `1px solid ${S.border}`, background: "#F8FAFC", fontSize: 15, cursor: "pointer" }}>✕</button>
+              <button onClick={() => setZoom(null)} style={{ width: 34, height: 34, borderRadius: 12, border: `1px solid ${S.line}`, background: "#F8FAFC", fontSize: 15, cursor: "pointer" }}>✕</button>
             </div>
             <img src={DISEASE_IMAGES[zoom.id]} alt={zoom.en} style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: 16, display: "block", background: "#F1F5F9" }} />
             <div style={{ fontSize: 11.5, color: "#94A3B8", marginTop: 8, textAlign: "center" }}>Tap outside to close</div>
           </div>
         </div>
       )}
+
+      {adminOpen && renderAdmin()}
     </div>
   );
+
+  // ================= ADMIN PANEL =================
+  function renderAdmin() {
+    const unassigned = books.filter((b) => !b.category).length;
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(8,13,22,0.6)", backdropFilter: "blur(5px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 22, width: "min(94vw, 660px)", maxHeight: "88vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.4)", animation: "pop .2s ease both" }}>
+          <div style={{ padding: "16px 22px", borderBottom: `1px solid ${S.line}`, display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: "#fff", zIndex: 2, borderRadius: "22px 22px 0 0" }}>
+            <div style={{ fontWeight: 760, fontSize: 16 }}>Admin panel</div>
+            <button onClick={() => { setAdminOpen(false); setAdminAuthed(false); setAdminPass(""); setPassInput(""); }}
+              style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${S.line}`, background: "#F8FAFC", cursor: "pointer" }}>✕</button>
+          </div>
+
+          {!adminAuthed ? (
+            <div style={{ padding: "32px 22px 36px", textAlign: "center" }}>
+              <div style={{ fontSize: 34 }}>🔐</div>
+              <div style={{ fontWeight: 700, marginTop: 8 }}>Administrator access</div>
+              <p style={{ fontSize: 13, color: S.sub }}>Enter the admin passcode to manage this platform.</p>
+              <input type="password" value={passInput} onChange={(e) => setPassInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && tryUnlock()}
+                placeholder="Passcode" style={{ ...inputStyle, maxWidth: 240, margin: "10px auto 0", textAlign: "center" }} />
+              <div><button onClick={tryUnlock} style={{ ...btn(`linear-gradient(135deg, ${settings.accent}, ${settings.accent}CC)`), marginTop: 12 }}>Unlock</button></div>
+              {flash && <div style={{ marginTop: 10, fontSize: 12.5, color: "#B91C1C" }}>{flash}</div>}
+            </div>
+          ) : (
+            <div style={{ padding: "16px 22px 26px" }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+                {[["sources", "Sources"], ["classes", "Therapeutic classes"], ["branding", "Branding"], ["security", "Security"]].map(([id, label]) => (
+                  <button key={id} onClick={() => setAdminTab(id)} style={{
+                    padding: "8px 15px", borderRadius: 999, fontSize: 12.5, fontWeight: 650, cursor: "pointer",
+                    border: `1px solid ${adminTab === id ? settings.accent : S.line}`,
+                    background: adminTab === id ? settings.accent : "#fff", color: adminTab === id ? "#fff" : S.body,
+                  }}>{label}</button>
+                ))}
+              </div>
+
+              {/* ---------- SOURCES ---------- */}
+              {adminTab === "sources" && (
+                <div>
+                  <p style={{ fontSize: 13, color: S.sub, marginTop: 0, lineHeight: 1.6 }}>
+                    Every source belongs to one therapeutic class, and users only ever search within the class they pick.
+                    Supported: <b>.txt, .md, .docx, .pdf, .csv, .xlsx</b>
+                  </p>
+                  {!dataLoaded && (
+                    <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, marginBottom: 10 }}>
+                      Couldn't load the current sources from the server. Uploading is disabled until this page loads them — please refresh.
+                    </div>
+                  )}
+                  {unassigned > 0 && (
+                    <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 12, padding: "10px 14px", fontSize: 12.5, marginBottom: 10, color: "#1E40AF" }}>
+                      {unassigned} older source{unassigned > 1 ? "s are" : " is"} showing under <b>{classes[0]?.name}</b> by default. Set the correct class below.
+                    </div>
+                  )}
+
+                  {classes.map((c) => {
+                    const list = classBooks(c.id);
+                    if (!list.length) return null;
+                    return (
+                      <div key={c.id} style={{ marginBottom: 14 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 7px" }}>
+                          <span style={{ width: 9, height: 9, borderRadius: 3, background: c.color }} />
+                          <span style={{ fontSize: 12, fontWeight: 720, letterSpacing: 0.4, textTransform: "uppercase", color: S.sub }}>{c.name}</span>
+                        </div>
+                        {list.map((b) => (
+                          <div key={b.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "#F8FAFC", border: `1px solid ${S.line}`, borderRadius: 14, padding: "10px 12px", marginBottom: 7, flexWrap: "wrap" }}>
+                            <div style={{ minWidth: 150, flex: 1 }}>
+                              <div style={{ fontWeight: 650, fontSize: 13.5 }}>{b.name}</div>
+                              <div style={{ fontSize: 11.5, color: S.sub }}>{sizeLabel(b.text.length)}{!b.category && " · class not set"}</div>
+                            </div>
+                            <select value={bookClass(b)} onChange={(e) => changeBookClass(b.name, e.target.value)}
+                              style={{ ...inputStyle, width: "auto", padding: "7px 10px", fontSize: 12.5, borderRadius: 10 }}>
+                              {classes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                            </select>
+                            <button onClick={() => removeBook(b.name)}
+                              style={{ background: "transparent", border: `1px solid ${S.line}`, borderRadius: 10, padding: "7px 12px", fontSize: 12, cursor: "pointer", color: "#B91C1C" }}>Remove</button>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+
+                  {books.length === 0 && (
+                    <div style={{ fontSize: 13, color: S.sub, padding: "8px 0" }}>
+                      No sources yet.{" "}
+                      <button onClick={async () => { try { const r = await apiAdmin(adminPass, { action: "restoreBooks" }); await refreshBooks(); showFlash(`Restored ${r.restored} source(s)`); } catch (e) { showFlash(e.message); } }}
+                        style={{ background: "none", border: "none", color: settings.accent, fontWeight: 700, fontSize: 13, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                        Restore last backup
+                      </button>
+                    </div>
+                  )}
+
+                  <div style={{ borderTop: `1px solid ${S.line}`, marginTop: 18, paddingTop: 4 }}>
+                    <label style={labelStyle}>Add a source — step 1: therapeutic class</label>
+                    <select value={uploadClass} onChange={(e) => setUploadClass(e.target.value)} style={inputStyle}>
+                      <option value="">Select a class…</option>
+                      {classes.map((c) => <option key={c.id} value={c.id}>{c.name} — {c.bn}</option>)}
+                    </select>
+
+                    <label style={labelStyle}>Step 2: upload a file, or paste text</label>
+                    <button onClick={() => fileRef.current?.click()} disabled={!uploadClass}
+                      style={{ ...btn(uploadClass ? `linear-gradient(135deg, ${settings.accent}, ${settings.accent}CC)` : "#CBD5E1"), cursor: uploadClass ? "pointer" : "default" }}>
+                      Upload source file
+                    </button>
+                    <input ref={fileRef} type="file" accept=".txt,.md,.docx,.pdf,.csv,.xlsx,.xls" onChange={onAdminFile} style={{ display: "none" }} />
+                    {uploadStatus && <div style={{ fontSize: 12.5, marginTop: 10, color: uploadStatus.startsWith("✕") ? "#B91C1C" : S.sub }}>{uploadStatus}</div>}
+
+                    <input value={pasteName} onChange={(e) => setPasteName(e.target.value)} placeholder="Source name" style={{ ...inputStyle, marginTop: 12, marginBottom: 8 }} />
+                    <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder="Paste content…" rows={4} style={{ ...inputStyle, resize: "vertical" }} />
+                    <button disabled={!pasteText.trim() || !uploadClass}
+                      onClick={async () => {
+                        const n = pasteName.trim() || "Pasted source";
+                        try { const ok = await addBook(n, pasteText, uploadClass); if (ok) { setPasteName(""); setPasteText(""); showFlash("Added"); } }
+                        catch (e) { showFlash("Save failed: " + e.message); }
+                      }}
+                      style={{ ...btn(pasteText.trim() && uploadClass ? S.ink : "#CBD5E1"), marginTop: 8, padding: "10px 18px", fontSize: 13 }}>
+                      Add pasted text
+                    </button>
+                    {flash && <div style={{ marginTop: 10, fontSize: 12.5, color: settings.accent, fontWeight: 650 }}>{flash}</div>}
+                  </div>
+                </div>
+              )}
+
+              {/* ---------- CLASSES ---------- */}
+              {adminTab === "classes" && (
+                <div>
+                  <p style={{ fontSize: 13, color: S.sub, marginTop: 0, lineHeight: 1.6 }}>
+                    These are the areas users choose from before starting a chat. A class with no sources shows as "coming soon".
+                  </p>
+                  {(draft.classes || []).map((c, i) => (
+                    <div key={c.id} style={{ background: "#F8FAFC", border: `1px solid ${S.line}`, borderRadius: 14, padding: "12px 14px", marginBottom: 9 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 9 }}>
+                        <span style={{ width: 28, height: 28, borderRadius: 9, background: c.color, color: "#fff", fontSize: 11, fontWeight: 750, display: "flex", alignItems: "center", justifyContent: "center" }}>{monogram(c)}</span>
+                        <b style={{ fontSize: 13.5, flex: 1 }}>{c.name}</b>
+                        <span style={{ fontSize: 11.5, color: S.sub }}>{classBooks(c.id).length} source(s)</span>
+                        <button onClick={() => {
+                          if (classBooks(c.id).length) { showFlash("Remove its sources first"); return; }
+                          const next = { ...draft, classes: draft.classes.filter((x) => x.id !== c.id) };
+                          setDraft(next); saveSettings(next);
+                        }} style={{ background: "transparent", border: `1px solid ${S.line}`, borderRadius: 9, padding: "5px 10px", fontSize: 11.5, cursor: "pointer", color: "#B91C1C" }}>Remove</button>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <div>
+                          <span style={miniLabel}>Name (English)</span>
+                          <input value={c.name} onChange={(e) => { const cl = [...draft.classes]; cl[i] = { ...c, name: e.target.value }; setDraft({ ...draft, classes: cl }); }} placeholder="English name" style={{ ...inputStyle, fontSize: 12.5 }} />
+                        </div>
+                        <div>
+                          <span style={miniLabel}>Name (বাংলা)</span>
+                          <input value={c.bn} onChange={(e) => { const cl = [...draft.classes]; cl[i] = { ...c, bn: e.target.value }; setDraft({ ...draft, classes: cl }); }} placeholder="বাংলা নাম" style={{ ...inputStyle, fontSize: 12.5 }} />
+                        </div>
+                      </div>
+                      <span style={{ ...miniLabel, marginTop: 9 }}>Refer users to this specialist</span>
+                      <input value={c.specialist} onChange={(e) => { const cl = [...draft.classes]; cl[i] = { ...c, specialist: e.target.value }; setDraft({ ...draft, classes: cl }); }}
+                        placeholder="e.g. dermatologist" style={{ ...inputStyle, fontSize: 12.5 }} />
+                      <span style={{ ...miniLabel, marginTop: 9 }}>Suggested questions (one per line)</span>
+                      <textarea value={Array.isArray(c.chips) ? c.chips.join("\n") : c.chips || ""}
+                        onChange={(e) => { const cl = [...draft.classes]; cl[i] = { ...c, chips: e.target.value.split("\n") }; setDraft({ ...draft, classes: cl }); }}
+                        placeholder="দাদ এর চিকিৎসা কী?" rows={3} style={{ ...inputStyle, fontSize: 12.5, resize: "vertical" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 11.5, color: S.sub }}>Colour</span>
+                        {["#0F9B8E", "#2563EB", "#DC2626", "#D97706", "#0891B2", "#7C3AED", "#16A34A"].map((col) => (
+                          <button key={col} onClick={() => { const cl = [...draft.classes]; cl[i] = { ...c, color: col }; setDraft({ ...draft, classes: cl }); }}
+                            style={{ width: 22, height: 22, borderRadius: 7, background: col, border: c.color === col ? `3px solid ${S.ink}` : "3px solid transparent", cursor: "pointer" }} />
+                        ))}
+                        <label style={{ fontSize: 11.5, color: S.sub, display: "flex", alignItems: "center", gap: 5, marginLeft: "auto" }}>
+                          <input type="checkbox" checked={!!c.images} onChange={(e) => { const cl = [...draft.classes]; cl[i] = { ...c, images: e.target.checked }; setDraft({ ...draft, classes: cl }); }} />
+                          Show skin-disease photos
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+
+                  <button onClick={() => saveSettings()} style={{ ...btn(`linear-gradient(135deg, ${settings.accent}, ${settings.accent}CC)`), marginTop: 6 }}>Save classes</button>
+                  {flash && <span style={{ marginLeft: 12, fontSize: 13, color: settings.accent, fontWeight: 650 }}>{flash}</span>}
+
+                  <label style={labelStyle}>Add a new class</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <input value={newClass.name} onChange={(e) => setNewClass({ ...newClass, name: e.target.value })} placeholder="English name" style={{ ...inputStyle, fontSize: 12.5 }} />
+                    <input value={newClass.bn} onChange={(e) => setNewClass({ ...newClass, bn: e.target.value })} placeholder="বাংলা নাম" style={{ ...inputStyle, fontSize: 12.5 }} />
+                  </div>
+                  <input value={newClass.specialist} onChange={(e) => setNewClass({ ...newClass, specialist: e.target.value })} placeholder="Specialist to refer to" style={{ ...inputStyle, fontSize: 12.5, marginTop: 8 }} />
+                  <button disabled={!newClass.name.trim()}
+                    onClick={() => {
+                      const id = newClass.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `class-${Date.now()}`;
+                      if ((draft.classes || []).some((c) => c.id === id)) { showFlash("That class already exists"); return; }
+                      const palette = ["#0F9B8E", "#2563EB", "#DC2626", "#D97706", "#0891B2", "#7C3AED", "#16A34A"];
+                      const next = { ...draft, classes: [...(draft.classes || []), {
+                        id, name: newClass.name.trim(), bn: newClass.bn.trim() || newClass.name.trim(),
+                        specialist: newClass.specialist.trim() || "doctor",
+                        color: palette[(draft.classes || []).length % palette.length], images: false, chips: [],
+                      }] };
+                      setDraft(next); saveSettings(next); setNewClass({ name: "", bn: "", specialist: "" });
+                    }}
+                    style={{ ...btn(newClass.name.trim() ? S.ink : "#CBD5E1"), marginTop: 8, padding: "10px 18px", fontSize: 13 }}>
+                    Add class
+                  </button>
+                </div>
+              )}
+
+              {/* ---------- BRANDING ---------- */}
+              {adminTab === "branding" && (
+                <div>
+                  <label style={labelStyle}>App name</label>
+                  <input value={draft.appName} onChange={(e) => setDraft({ ...draft, appName: e.target.value })} style={inputStyle} />
+                  <label style={labelStyle}>Tagline</label>
+                  <input value={draft.tagline} onChange={(e) => setDraft({ ...draft, tagline: e.target.value })} style={inputStyle} />
+                  <label style={labelStyle}>Start screen heading</label>
+                  <input value={draft.gateHeading} onChange={(e) => setDraft({ ...draft, gateHeading: e.target.value })} style={inputStyle} />
+                  <label style={labelStyle}>Start screen subtitle</label>
+                  <textarea value={draft.gateSub} onChange={(e) => setDraft({ ...draft, gateSub: e.target.value })} rows={2} style={{ ...inputStyle, resize: "vertical" }} />
+                  <label style={labelStyle}>Disclaimer text</label>
+                  <input value={draft.disclaimer} onChange={(e) => setDraft({ ...draft, disclaimer: e.target.value })} style={inputStyle} />
+                  <label style={labelStyle}>Brand colour (start screen & logo)</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {["#0F9B8E", "#2563EB", "#7C3AED", "#DB2777", "#EA580C", "#16A34A"].map((c) => (
+                      <button key={c} onClick={() => setDraft({ ...draft, accent: c })}
+                        style={{ width: 34, height: 34, borderRadius: 11, border: draft.accent === c ? `3px solid ${S.ink}` : "3px solid transparent", background: c, cursor: "pointer" }} />
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 12, color: S.sub, marginTop: 10 }}>Each therapeutic class has its own colour, set in the Therapeutic classes tab.</p>
+                  <button onClick={() => saveSettings()} style={{ ...btn(`linear-gradient(135deg, ${settings.accent}, ${settings.accent}CC)`), marginTop: 10 }}>Save changes</button>
+                  {flash && <span style={{ marginLeft: 12, fontSize: 13, color: settings.accent, fontWeight: 650 }}>{flash}</span>}
+                </div>
+              )}
+
+              {/* ---------- SECURITY ---------- */}
+              {adminTab === "security" && (
+                <div style={{ fontSize: 13.5, lineHeight: 1.75, color: S.body }}>
+                  <p style={{ marginTop: 0 }}>Your admin passcode is stored securely on the server, not inside this app, so users can never discover it.</p>
+                  <p><b>To change it:</b> open your Vercel dashboard → your project → <b>Settings → Environment Variables</b> → edit <code>ADMIN_PASSCODE</code> → then <b>Deployments → Redeploy</b>. The new passcode takes effect in about a minute.</p>
+                  <p style={{ color: S.sub }}>Your AI key and database keys are also kept server-side and never sent to users' phones.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 }
